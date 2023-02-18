@@ -1,115 +1,182 @@
 import 'package:flutter/material.dart';
+import 'package:cast/cast.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Cast Demo',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to zero; the application
-        // is not restarted.
         primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: Scaffold(
+        appBar: AppBar(),
+        body: MyHomePage(),
+      ),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  _MyHomePageState createState() => _MyHomePageState();
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+  Future<List<CastDevice>>? _future;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _startSearch();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Invoke "debug painting" (press "p" in the console, choose the
-          // "Toggle Debug Paint" action from the Flutter Inspector in Android
-          // Studio, or the "Toggle Debug Paint" command in Visual Studio Code)
-          // to see the wireframe for each widget.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
+    return FutureBuilder<List<CastDevice>>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Center(
+            child: Text(
+              'Error: ${snapshot.error.toString()}',
             ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headline4,
-            ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+          );
+        } else if (!snapshot.hasData) {
+          return Center(
+            child: CircularProgressIndicator(),
+          );
+        }
+
+        if (snapshot.data!.isEmpty) {
+          return Column(
+            children: [
+              Center(
+                child: Text(
+                  'No Chromecast founded',
+                ),
+              ),
+            ],
+          );
+        }
+
+        return Column(
+          children: snapshot.data!.map((device) {
+            return ListTile(
+              title: Text(device.name),
+              onTap: () {
+                // _connectToYourApp(context, device);
+                _connectAndPlayMedia(context, device);
+              },
+            );
+          }).toList(),
+        );
+      },
     );
+  }
+
+  void _startSearch() {
+    _future = CastDiscoveryService().search();
+  }
+
+  Future<void> _connectToYourApp(
+      BuildContext context, CastDevice object) async {
+    final session = await CastSessionManager().startSession(object);
+
+    session.stateStream.listen((state) {
+      if (state == CastSessionState.connected) {
+        final snackBar = SnackBar(content: Text('Connected'));
+        ScaffoldMessenger.of(context).showSnackBar(snackBar);
+        // Scaffold.of(context).showSnackBar(snackBar);
+
+        _sendMessageToYourApp(session);
+      }
+    });
+
+    session.messageStream.listen((message) {
+      print('receive message: $message');
+    });
+
+    session.sendMessage(CastSession.kNamespaceReceiver, {
+      'type': 'LAUNCH',
+      'appId': 'Youtube', // set the appId of your app here
+    });
+  }
+
+  void _sendMessageToYourApp(CastSession session) {
+    print('_sendMessageToYourApp');
+
+    session.sendMessage('urn:x-cast:namespace-of-the-app', {
+      'type': 'sample',
+    });
+  }
+
+  Future<void> _connectAndPlayMedia(
+      BuildContext context, CastDevice object) async {
+    final session = await CastSessionManager().startSession(object);
+
+    session.stateStream.listen((state) {
+      if (state == CastSessionState.connected) {
+        final snackBar = SnackBar(content: Text('Connected'));
+        ScaffoldMessenger.of(context).showSnackBar(snackBar);
+        // Scaffold.of(context).showSnackBar(snackBar);
+      }
+    });
+
+    var index = 0;
+
+    session.messageStream.listen((message) {
+      index += 1;
+
+      print('receive message: $message');
+
+      if (index == 2) {
+        Future.delayed(Duration(seconds: 5)).then((x) {
+          _sendMessagePlayVideo(session);
+        });
+      }
+    });
+
+    session.sendMessage(CastSession.kNamespaceReceiver, {
+      'type': 'LAUNCH',
+      'appId': 'CC1AD845', // set the appId of your app here
+    });
+  }
+
+  void _sendMessagePlayVideo(CastSession session) {
+    print('_sendMessagePlayVideo');
+
+    var message = {
+      // Here you can plug an URL to any mp4, webm, mp3 or jpg file with the proper contentType.
+      'contentId':
+          'http://commondatastorage.googleapis.com/gtv-videos-bucket/big_buck_bunny_1080p.mp4',
+      'contentType': 'video/mp4',
+      'streamType': 'BUFFERED', // or LIVE
+
+      // Title and cover displayed while buffering
+      'metadata': {
+        'type': 0,
+        'metadataType': 0,
+        'title': "Big Buck Bunny",
+        'images': [
+          {
+            'url':
+                'http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/BigBuckBunny.jpg'
+          }
+        ]
+      }
+    };
+
+    session.sendMessage(CastSession.kNamespaceMedia, {
+      'type': 'LOAD',
+      'autoPlay': true,
+      'currentTime': 0,
+      'media': message,
+    });
   }
 }
